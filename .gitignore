@@ -1,0 +1,17 @@
+# Godot
+**/.godot/
+export.cfg
+export_presets.cfg
+
+# Office lock / temp
+~$*
+*.tmp
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local scratch
+/tools/
