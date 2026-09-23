@@ -34,7 +34,7 @@ Demo：四幕（破封 → 发现 → 讲述 → 合棺），约 60–80 分钟�
 1. 运行 Godot（本机示例路径）：  
    `...\WinGet\Packages\GodotEngine.GodotEngine_*\Godot_v4.7.2-stable_win64.exe`
 2. Import / 打开文件夹：`c:\Users\yoimi\Desktop\Tgame\game`
-3. **F5** 从 1A 开跑
+3. **F5** 从 1A 开跑（**默认全屏**；设计分辨率仍为 1280×720 / 16:9）
 
 | 键 | 功能 |
 |----|------|
