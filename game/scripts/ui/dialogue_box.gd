@@ -16,6 +16,7 @@ var _busy: bool = false
 func _ready() -> void:
 	visible = false
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	add_to_group("dialogue_box")
 
 
 func is_open() -> bool:

@@ -1,8 +1,9 @@
 extends CharacterBody2D
 class_name PlayerController
-## 横版移动 + E 调查。演出锁时不可移动。
+## 横版移动 + E 调查（距离判定，不依赖必须走进 Area）
 
 @export var move_speed: float = 180.0
+@export var interact_range: float = 100.0
 
 var locked: bool = false
 var _nearby: Array[Interactable] = []
@@ -38,7 +39,6 @@ func _physics_process(_delta: float) -> void:
 
 	_update_prompt()
 
-	# 锁移动时仍可 E（如床上起身）
 	if Input.is_action_just_pressed("interact"):
 		_try_interact()
 
@@ -54,7 +54,8 @@ func remove_nearby(item: Interactable) -> void:
 
 func _update_prompt() -> void:
 	var target := _get_focus()
-	if target and not locked:
+	# 锁移动时也显示提示（起身等）
+	if target:
 		_prompt.visible = true
 		_prompt.text = "E · %s" % target.prompt_text
 	else:
@@ -64,17 +65,43 @@ func _update_prompt() -> void:
 func _get_focus() -> Interactable:
 	var best: Interactable = null
 	var best_d := INF
-	for item in _nearby:
-		if not is_instance_valid(item) or not item.is_active():
+	var origin := global_position + Vector2(0, -28)
+
+	# 1) 组内距离（主路径）
+	for node in get_tree().get_nodes_in_group("interactable"):
+		var item := node as Interactable
+		if item == null or not item.is_active():
 			continue
-		var d := global_position.distance_squared_to(item.global_position)
-		if d < best_d:
+		var d := origin.distance_to(item.focus_point())
+		var range_ok := minf(interact_range, item.interact_radius)
+		if d <= range_ok and d < best_d:
 			best_d = d
 			best = item
+
+	# 2) Area 登记的兜底
+	if best == null:
+		for item in _nearby:
+			if not is_instance_valid(item) or not item.is_active():
+				continue
+			var d2 := origin.distance_to(item.focus_point())
+			if d2 < best_d:
+				best_d = d2
+				best = item
+
 	return best
 
 
 func _try_interact() -> void:
+	if dialogue_blocking():
+		return
 	var target := _get_focus()
 	if target:
 		target.interact(self)
+
+
+func dialogue_blocking() -> bool:
+	# 对白打开时由 DialogueBox 吃输入
+	for node in get_tree().get_nodes_in_group("dialogue_box"):
+		if node.has_method("is_open") and node.is_open():
+			return true
+	return false

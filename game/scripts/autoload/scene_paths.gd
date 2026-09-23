@@ -1,0 +1,11 @@
+class_name ScenePaths
+extends RefCounted
+
+const WARD_1A := "res://scenes/act1/ward_1a.tscn"
+const CORRIDOR_1B := "res://scenes/act1/corridor_1b.tscn"
+const SEAL_1C := "res://scenes/act1/seal_1c.tscn"
+const OFFICE_2 := "res://scenes/act2/office_2.tscn"
+const HUT_3 := "res://scenes/act3/hut_3.tscn"
+const DIARY_NIGHT := "res://scenes/act3/diary_night.tscn"
+const CHAMBER_4 := "res://scenes/act4/chamber_4.tscn"
+const DEMO_END := "res://scenes/demo_end.tscn"
