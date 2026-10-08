@@ -1,11 +1,13 @@
 extends GreyboxLevel
-## 1C 密室法阵 + 1D 田中之死——合棺清醒（剧情设计 v1.1）
+## S1-4 识别法阵（调查即解密）→ S1-5 自动破封 → S1-6 不给棺内
 
+
+var _seen: Dictionary = {}
 var _seal_progress: float = 0.0
 var _erasing: bool = false
 var _seal_done: bool = false
 var _seal_bar: ColorRect
-var _seal_area: Interactable
+var _coffin_prop: Polygon2D
 
 
 func get_room_width() -> float:
@@ -13,22 +15,25 @@ func get_room_width() -> float:
 
 
 func _ready() -> void:
-	setup_shell(1280.0, "1C · 地下密室·封印")
-	add_prop(Vector2(520, 480), Vector2(240, 80), Color("3a2a22"), "Coffin")
-	add_prop(Vector2(480, 420), Vector2(40, 40), Color("8b2020"), "Mask1")
-	add_prop(Vector2(760, 420), Vector2(40, 40), Color("8b2020"), "Mask2")
-	add_prop(Vector2(480, 560), Vector2(40, 40), Color("8b2020"), "Mask3")
-	add_prop(Vector2(760, 560), Vector2(40, 40), Color("8b2020"), "Mask4")
+	GameState.puzzle_id = "seal"
+	setup_shell(1280.0, "S1-4 · 密室 · 识别法阵")
+	_coffin_prop = add_prop(Vector2(520, 480), Vector2(240, 80), Color("3a2a22"), "Coffin")
 	add_label_at(Vector2(560, 450), "合棺", Color("c0a090"))
-
 	add_prop(Vector2(500, 400), Vector2(280, 200), Color(0.45, 0.1, 0.12, 0.35), "SealGlow")
+	for i in 7:
+		var x := 360.0 + i * 80.0
+		add_prop(Vector2(x, 360), Vector2(36, 44), Color("8b2020"), "Mask%d" % i)
 
-	make_interactable("coffin_look", "调查·合棺", Vector2(560, 460), Vector2(160, 70), Color("5a4038"), true).interacted.connect(_on_coffin)
-	_seal_area = make_interactable("seal", "长按 E · 抹除法阵", Vector2(540, 500), Vector2(200, 80), Color("7a3030"), false)
-	_seal_area.interacted.connect(_on_seal_tap)
-	# 查过合棺后再显示抹除交互（避免与合棺抢焦点）
-	_seal_area.set_enabled(false)
-	_seal_area.visible = false
+	make_interactable("coffin", "查看·合棺", Vector2(560, 460), Vector2(160, 70), Color("5a4038"), true).interacted.connect(_on_coffin)
+	make_interactable("seal", "查看·法阵", Vector2(540, 500), Vector2(120, 50), Color("7a3030"), false).interacted.connect(_on_seal)
+	make_interactable("center", "查看·中央的字", Vector2(620, 490), Vector2(70, 40), Color("9a4040"), true).interacted.connect(_on_center)
+	var masks := make_interactable("masks", "查看·反挂面具", Vector2(400, 340), Vector2(80, 70), Color("8b3030"), true)
+	masks.ground_focus = true
+	masks.interact_radius = 160.0
+	masks.interacted.connect(_on_masks)
+	make_interactable("oldnew", "查看·朱砂新旧", Vector2(760, 500), Vector2(80, 50), Color("6a2020"), true).interacted.connect(_on_oldnew)
+	make_interactable("dress", "查看·红嫁衣", Vector2(160, 500), Vector2(70, 50), Color("8b2020"), true).interacted.connect(_on_dress)
+	make_interactable("cups", "查看·合卺碎片", Vector2(280, 520), Vector2(70, 40), Color("8a7060"), true).interacted.connect(_on_cups)
 
 	var hud := get_node("HUD") as CanvasLayer
 	var bar_bg := ColorRect.new()
@@ -46,59 +51,93 @@ func _ready() -> void:
 	hud.add_child(_seal_bar)
 
 	spawn_player(Vector2(200, 600), false)
-	await say([
-		"【1C 密室】中央是合棺，地面朱砂法阵，四角反挂傩面具。",
-		"先调查合棺。之后才会出现抹除法阵的交互。",
-	])
-	status.text = "目标：调查合棺"
+	await say(["田中：这是什么……棺材？好大一口。"])
+	status.text = "调查合棺、法阵、「镇」、面具朝向"
 
 
-func _process(_delta: float) -> void:
-	if _seal_done:
+func _process(delta: float) -> void:
+	if not _erasing or _seal_done:
 		return
-	if _erasing and Input.is_action_pressed("interact") and not dialogue.is_open():
-		_seal_progress = minf(1.0, _seal_progress + _delta / 4.0)
-		_seal_bar.visible = true
-		(get_node("HUD/SealBarBG") as ColorRect).visible = true
-		_seal_bar.size.x = 400.0 * _seal_progress
-		var glow := get_node_or_null("SealGlow") as Polygon2D
-		if glow:
-			glow.color.a = 0.35 * (1.0 - _seal_progress)
-		if _seal_progress >= 1.0:
-			_finish_seal()
-	elif _erasing and not Input.is_action_pressed("interact"):
-		pass
+	_seal_progress = minf(1.0, _seal_progress + delta / 4.0)
+	_seal_bar.visible = true
+	var bg := get_node_or_null("HUD/SealBarBG") as ColorRect
+	if bg:
+		bg.visible = true
+	_seal_bar.size.x = 400.0 * _seal_progress
+	var glow := get_node_or_null("SealGlow") as Polygon2D
+	if glow:
+		glow.color.a = 0.35 * (1.0 - _seal_progress)
+	if _seal_progress >= 1.0:
+		_finish_seal()
+
+
+func _mark(id: String) -> void:
+	_seen[id] = true
+	if _seen.has("center") and _seen.has("masks") and not GameState.has_flag("1c_identified"):
+		GameState.set_flag("1c_identified", true)
+		_start_bewitch()
 
 
 func _on_coffin(_by: PlayerController) -> void:
+	await say(["双人棺。木头是湿的。", "田中：两个人？……谁和谁。"])
+	_mark("coffin")
 	GameState.set_flag("1c_coffin_seen", true)
+
+
+func _on_seal(_by: PlayerController) -> void:
+	await say(["地上画了一圈。朱砂。笔很稳。"])
+	_mark("seal")
+
+
+func _on_center(_by: PlayerController) -> void:
+	GameState.add_note("法阵中央：镇。不是驱。")
+	await say(["中间一个字。笔画很重。——「镇」。"])
+	_mark("center")
+
+
+func _on_masks(_by: PlayerController) -> void:
+	GameState.add_note("七个傩面具反挂，脸朝棺材。")
 	await say([
-		"田中：（困惑）这是什么……棺材？地上的画……中国人的东西？",
-		"他用枪拨开棺盖缝隙——腐朽气息涌出。",
+		"七个傩面具，都倒着挂。脸朝着棺材。",
+		"田中：朝里，不朝外。……这是要压住什么。",
 	])
-	_seal_area.set_enabled(true)
-	_seal_area.visible = true
-	status.text = "靠近法阵，长按 E 抹除"
+	_mark("masks")
 
 
-func _on_seal_tap(_by: PlayerController) -> void:
-	if _seal_done or _erasing:
+func _on_oldnew(_by: PlayerController) -> void:
+	GameState.add_note("朱砂有新旧两道。有人补过。")
+	await say(["有的线是新的，压在旧线上面。补过。", "田中：迷信的把戏。"])
+	_mark("oldnew")
+
+
+func _on_dress(_by: PlayerController) -> void:
+	await say(["叠得很整齐。像从没穿过。"])
+
+
+func _on_cups(_by: PlayerController) -> void:
+	GameState.add_note("合卺杯：婚礼交杯。")
+	await say(["一对喜杯，碎在地上。红金两色。"])
+
+
+func _start_bewitch() -> void:
+	if _erasing:
 		return
-	if not GameState.has_flag("1c_bewitched"):
-		GameState.set_flag("1c_bewitched", true)
-		await red_flash()
-		await say([
-			"朱砂微微发光。面具似乎转了过来。粤曲贴耳。",
-			"视野水墨晕染——田中眼神空洞。",
-			"田中：（机械地）打破它……打破它……",
-			"（长按 E 抹除法阵，松开则暂停）",
-		])
-	_erasing = true
-	status.text = "长按 E 抹除法阵…"
 	player.locked = true
+	GameState.set_flag("1c_bewitched", true)
+	await red_flash()
+	await ink_wash(0.4, 0.1)
+	await say([
+		"画面边缘晕开。田中眼神散了。",
+		"田中：（机械）打破它……打破它……打破它……",
+		"（手不听使唤。法阵开始被抹掉。）",
+	], true)
+	status.text = "S1-5 · 被蛊惑 · 破封（无法操作）"
+	_erasing = true
 
 
 func _finish_seal() -> void:
+	if _seal_done:
+		return
 	_seal_done = true
 	_erasing = false
 	_seal_bar.visible = false
@@ -106,46 +145,54 @@ func _finish_seal() -> void:
 	if bg:
 		bg.visible = false
 	GameState.set_flag("1c_seal_broken", true)
-	player.locked = false
 	await say([
-		"法阵光芒熄灭，面具纷纷掉落。封印破碎。",
-		"密室骤冷。合棺「咚」地一震——然后一切扭曲。",
-	])
+		"面具一块块砸在地上。法阵的光灭了。",
+		"（所有声音停了一拍。）",
+		"密室骤冷。合棺「咚」地一震。",
+	], true)
 	await _death_sequence()
 
 
 func _death_sequence() -> void:
-	status.text = "1D · 田中之死——合棺清醒"
+	status.text = "S1-6 · 合棺清醒"
 	GameState.set_flag("1d_playing", true)
 	player.locked = true
+	set_black(1.0)
+	await say([
+		"（全黑。呼吸很近。）",
+		"田中：什……什么……我怎么在这里……",
+		"田中：动不了……身子动不了……",
+	], true)
+	set_black(0.35)
 	await red_flash()
 	await say([
-		"田中如梦初醒——发现自己已经不在法阵前。",
-		"他正躺在合棺里。棺盖半开，微弱光线透入。",
-		"身体无法动弹，只有眼球和嘴唇能动。",
-		"田中：（恐惧，低声）什……什么……我怎么在这里……动不了……",
-	])
-	status.text = "1D · 花旦鬼凝视"
-	await red_flash()
+		"傩舞花旦鬼站在棺口。面具、水袖、血泪。嘴角像在笑。",
+		"她：（空灵，双声部）你……看见了吗……",
+		"（田中想喊。发不出声。口型：不……不要……）",
+	], true)
+	set_black(1.0)
+	status.text = "七钉"
+	for i in 7:
+		status.text = "第 %d 钉" % (i + 1)
+		await get_tree().create_timer(0.85).timeout
+	status.text = "……"
+	await get_tree().create_timer(2.0).timeout
+	set_black(0.15)
+	status.text = "次日 · 密室外"
 	await say([
-		"合棺旁，傩舞花旦鬼低头凝视棺中的他——花旦戏服、傩面具、水袖垂落。",
-		"面具下眼部有血泪；嘴角露出诡异微笑：像「终于有人陪我」。",
-		"阿霞：（空灵，双声部）你……看见了吗……",
-		"田中想喊，发不出声。口型：不……不要……",
-	])
-	status.text = "1D · 棺盖合上与钉棺"
+		"光慢慢回来。镜头停在棺盖上。",
+	], true)
+	# 棺盖实位移半寸
+	if _coffin_prop:
+		var tw := create_tween()
+		tw.tween_property(_coffin_prop, "position:y", _coffin_prop.position.y - 8.0, 1.6)
+		await tw.finished
 	await say([
-		"花旦鬼缓缓合上棺盖。黑暗降临。",
-		"咚、咚、咚——每一钉都伴随画面震动。",
-		"田中挣扎、抓挠棺壁、试图呼救（无声）。声音渐消，只剩心跳，最后寂静。",
-	])
-	await get_tree().create_timer(1.2).timeout
-	await say([
-		"【全黑】钉棺声变慢……停止。",
-		"画面渐亮：田中已死——面容扭曲、双手抓挠、咬碎舌头、指甲断裂、无外伤。",
-		"眼睛死死盯着棺盖方向，死不瞑目。",
-		"【切至次日】军医山本的办公室。",
-	])
+		"棺盖被推开半寸。不给方向。",
+		"缝里是黑的。不给棺内画面。",
+	], true)
+	await get_tree().create_timer(4.0).timeout
 	GameState.set_flag("1d_complete", true)
 	GameState.set_flag("act1_complete", true)
+	GameState.puzzle_id = ""
 	goto_scene(ScenePaths.OFFICE_2)

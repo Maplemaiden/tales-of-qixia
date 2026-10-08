@@ -6,6 +6,8 @@ class_name PlayerController
 @export var interact_range: float = 100.0
 
 var locked: bool = false
+## 鬼影段：站在躲避点内时不被监管抓取
+var hiding: bool = false
 var _nearby: Array[Interactable] = []
 var _facing: float = 1.0
 
@@ -16,11 +18,12 @@ var _facing: float = 1.0
 func _ready() -> void:
 	collision_layer = 2
 	collision_mask = 1
+	motion_mode = MOTION_MODE_FLOATING
 
 
 func _physics_process(_delta: float) -> void:
 	if locked:
-		velocity.x = 0.0
+		velocity = Vector2.ZERO
 		move_and_slide()
 	else:
 		var dir := 0.0

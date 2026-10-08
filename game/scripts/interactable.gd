@@ -9,6 +9,8 @@ signal interacted(by: PlayerController)
 @export var once: bool = false
 ## 交互判定半径（相对脚底/中心）
 @export var interact_radius: float = 90.0
+## 高处物件：判定点落到站立高度，色块位置不变
+@export var ground_focus: bool = false
 
 var _used: bool = false
 var _enabled: bool = true
@@ -26,6 +28,14 @@ func _ready() -> void:
 	call_deferred("_sync_overlaps")
 
 
+func is_used() -> bool:
+	return _used
+
+
+func reset_use() -> void:
+	_used = false
+
+
 func is_active() -> bool:
 	return _enabled and not (once and _used)
 
@@ -35,8 +45,12 @@ func set_enabled(v: bool) -> void:
 
 
 func focus_point() -> Vector2:
-	# 碰撞形状中心；无则用节点位置偏下（接近站立高度）
 	var shape := get_node_or_null("CollisionShape2D") as CollisionShape2D
+	var x := global_position.x
+	if shape:
+		x += shape.position.x
+	if ground_focus:
+		return Vector2(x, 572.0)
 	if shape:
 		return global_position + shape.position
 	return global_position + Vector2(0, 40)

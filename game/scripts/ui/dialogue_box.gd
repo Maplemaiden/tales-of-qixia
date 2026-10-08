@@ -31,7 +31,6 @@ func play(lines: Array[String]) -> void:
 	_index = 0
 	_busy = true
 	visible = true
-	get_tree().paused = true
 	_show_current()
 
 
@@ -59,5 +58,4 @@ func _advance() -> void:
 func _close() -> void:
 	_busy = false
 	visible = false
-	get_tree().paused = false
 	finished.emit()
