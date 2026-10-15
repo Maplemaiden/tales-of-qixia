@@ -1,37 +1,22 @@
 extends GreyboxLevel
-## S3-2 挤牙膏 + S3-3 一闪 + S3-4 结论三选一 + S3-5 劝告辱骂
+## S3-2 挤牙膏 + S3-3 一闪 + S3-4 线索卡排序 + S3-5 劝告辱骂
 
 
-const CHOICES := [
-	{
-		"id": "suicide",
-		"text": "她是自己寻的死。",
-		"ok": false,
-		"reply": [
-			"山本：自己寻的死？……那钉子是谁钉的。",
-			"阿福伯：先生……不是这样的。",
-		],
-	},
-	{
-		"id": "ghost",
-		"text": "田中是被鬼杀死的。",
-		"ok": false,
-		"reply": [
-			"山本：鬼？田中是被凶手杀的。不是什么鬼。",
-			"阿福伯：先生……不是这样的。",
-		],
-	},
-	{
-		"id": "coffin",
-		"text": "有人把这个姑娘活着钉进了棺材，和死人葬在一起。",
-		"ok": true,
-		"reply": [],
-	},
+## 正确顺序：七年前 → 有个姑娘 → 不是自杀 → 活活钉进去 → 和死人合葬
+const CLUE_CARDS := [
+	{"id": "years", "text": "七年前"},
+	{"id": "girl", "text": "有个姑娘"},
+	{"id": "not_suicide", "text": "不是自杀"},
+	{"id": "nailed", "text": "活活钉进去"},
+	{"id": "burial", "text": "和死人合葬"},
 ]
 
 var _story_step: int = 0
-var _choice_root: Control
-var _picking: bool = false
+var _sort_root: Control
+var _card_list: VBoxContainer
+var _order: Array[int] = []
+var _sorting: bool = false
+var _feedback: Label
 
 
 func get_room_width() -> float:
@@ -50,31 +35,31 @@ func _ready() -> void:
 	make_interactable("score", "查看·曲谱", Vector2(280, 490), Vector2(60, 50), Color("706050"), true).interacted.connect(_on_score)
 	make_interactable("chest", "查看·旧木箱", Vector2(40, 500), Vector2(70, 50), Color("3a3028"), true).interacted.connect(_on_chest)
 
-	_build_choice_ui()
+	_build_sort_ui()
 	spawn_player(Vector2(150, 600), false)
 	await say(["老头在里面。山本推门。"])
 	status.text = "与阿福伯对话"
 
 
-func _build_choice_ui() -> void:
+func _build_sort_ui() -> void:
 	var hud := get_node("HUD") as CanvasLayer
-	_choice_root = Control.new()
-	_choice_root.name = "ConclusionChoice"
-	_choice_root.visible = false
-	_choice_root.mouse_filter = Control.MOUSE_FILTER_STOP
-	_choice_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	hud.add_child(_choice_root)
+	_sort_root = Control.new()
+	_sort_root.name = "ClueSort"
+	_sort_root.visible = false
+	_sort_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_sort_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hud.add_child(_sort_root)
 
 	var dim := ColorRect.new()
-	dim.color = Color(0.05, 0.04, 0.06, 0.58)
+	dim.color = Color(0.05, 0.04, 0.06, 0.62)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_choice_root.add_child(dim)
+	_sort_root.add_child(dim)
 
 	var panel := PanelContainer.new()
-	panel.position = Vector2(260, 140)
-	panel.custom_minimum_size = Vector2(760, 0)
-	_choice_root.add_child(panel)
+	panel.position = Vector2(280, 70)
+	panel.custom_minimum_size = Vector2(720, 0)
+	_sort_root.add_child(panel)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 22)
@@ -88,26 +73,45 @@ func _build_choice_ui() -> void:
 	margin.add_child(col)
 
 	var title := Label.new()
-	title.text = "你听懂了什么。"
+	title.text = "S3-4 · 把他说的话理一遍"
 	title.add_theme_font_size_override("font_size", 22)
 	title.add_theme_color_override("font_color", Color("e8dcd0"))
 	col.add_child(title)
 
 	var hint := Label.new()
-	hint.text = "选一句。不是复述，是判断。"
+	hint.text = "用 ↑↓ 调整顺序，再确认。不是考智力，是亲手理一遍。"
 	hint.add_theme_font_size_override("font_size", 14)
 	hint.add_theme_color_override("font_color", Color("8a8078"))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(hint)
 
-	for i in CHOICES.size():
-		var btn := Button.new()
-		btn.text = "%d  %s" % [i + 1, str(CHOICES[i]["text"])]
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		btn.custom_minimum_size = Vector2(0, 40)
-		btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		btn.pressed.connect(_on_pick.bind(i))
-		col.add_child(btn)
+	_card_list = VBoxContainer.new()
+	_card_list.add_theme_constant_override("separation", 8)
+	col.add_child(_card_list)
+
+	_feedback = Label.new()
+	_feedback.text = ""
+	_feedback.add_theme_font_size_override("font_size", 14)
+	_feedback.add_theme_color_override("font_color", Color("c08070"))
+	col.add_child(_feedback)
+
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 12)
+	col.add_child(actions)
+
+	var confirm := Button.new()
+	confirm.text = "确认顺序"
+	confirm.focus_mode = Control.FOCUS_NONE
+	confirm.custom_minimum_size = Vector2(160, 36)
+	confirm.pressed.connect(_on_confirm_order)
+	actions.add_child(confirm)
+
+	var reshuffle := Button.new()
+	reshuffle.text = "打乱重排"
+	reshuffle.focus_mode = Control.FOCUS_NONE
+	reshuffle.custom_minimum_size = Vector2(120, 36)
+	reshuffle.pressed.connect(_shuffle_and_refresh)
+	actions.add_child(reshuffle)
 
 
 func _set_world_interact(v: bool) -> void:
@@ -116,31 +120,127 @@ func _set_world_interact(v: bool) -> void:
 			(node as Interactable).set_enabled(v)
 
 
-func _show_choices() -> void:
-	_choice_root.visible = true
+func _show_sort() -> void:
+	_sorting = false
+	_feedback.text = ""
+	_shuffle_and_refresh()
+	_sort_root.visible = true
 	if player:
 		player.locked = true
 	_set_world_interact(false)
-	status.text = "S3-4 · 你听懂了什么"
+	status.text = "S3-4 · 线索拼凑 · 用 ↑↓ 调顺序"
 
 
-func _hide_choices() -> void:
-	_choice_root.visible = false
+func _hide_sort() -> void:
+	_sort_root.visible = false
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if _choice_root and _choice_root.visible and not _picking and event is InputEventKey and event.pressed and not event.echo:
-		var key := event as InputEventKey
-		var n: int = key.keycode
-		if n >= KEY_1 and n <= KEY_3:
-			_on_pick(n - KEY_1)
-			get_viewport().set_input_as_handled()
-			return
-		if n >= KEY_KP_1 and n <= KEY_KP_3:
-			_on_pick(n - KEY_KP_1)
-			get_viewport().set_input_as_handled()
-			return
-	super._unhandled_input(event)
+func _shuffle_and_refresh() -> void:
+	_order.clear()
+	for i in CLUE_CARDS.size():
+		_order.append(i)
+	# 打乱，避免开局已是正解
+	for _n in 12:
+		var a := randi() % _order.size()
+		var b := randi() % _order.size()
+		var tmp := _order[a]
+		_order[a] = _order[b]
+		_order[b] = tmp
+	if _order_ok():
+		var last := _order[_order.size() - 1]
+		_order[_order.size() - 1] = _order[0]
+		_order[0] = last
+	_refresh_cards()
+
+
+func _refresh_cards() -> void:
+	for child in _card_list.get_children():
+		child.queue_free()
+	for slot in _order.size():
+		var card_i: int = _order[slot]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+
+		var num := Label.new()
+		num.text = "%d." % (slot + 1)
+		num.custom_minimum_size = Vector2(28, 0)
+		num.add_theme_font_size_override("font_size", 16)
+		num.add_theme_color_override("font_color", Color("a89888"))
+		row.add_child(num)
+
+		var card := Button.new()
+		card.text = str(CLUE_CARDS[card_i]["text"])
+		card.focus_mode = Control.FOCUS_NONE
+		card.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		card.custom_minimum_size = Vector2(420, 40)
+		card.disabled = true
+		row.add_child(card)
+
+		var up := Button.new()
+		up.text = "↑"
+		up.focus_mode = Control.FOCUS_NONE
+		up.custom_minimum_size = Vector2(44, 40)
+		up.disabled = slot == 0
+		up.pressed.connect(_move_card.bind(slot, -1))
+		row.add_child(up)
+
+		var down := Button.new()
+		down.text = "↓"
+		down.focus_mode = Control.FOCUS_NONE
+		down.custom_minimum_size = Vector2(44, 40)
+		down.disabled = slot == _order.size() - 1
+		down.pressed.connect(_move_card.bind(slot, 1))
+		row.add_child(down)
+
+		_card_list.add_child(row)
+
+
+func _move_card(slot: int, delta: int) -> void:
+	if _sorting:
+		return
+	var dest := slot + delta
+	if dest < 0 or dest >= _order.size():
+		return
+	var tmp := _order[slot]
+	_order[slot] = _order[dest]
+	_order[dest] = tmp
+	_feedback.text = ""
+	_refresh_cards()
+
+
+func _order_ok() -> bool:
+	for i in _order.size():
+		if _order[i] != i:
+			return false
+	return true
+
+
+func _on_confirm_order() -> void:
+	if _sorting or not _sort_root.visible:
+		return
+	_sorting = true
+	if _order_ok():
+		_feedback.text = ""
+		_hide_sort()
+		# 成功：一秒静默，不要「叮」
+		await get_tree().create_timer(1.0).timeout
+		await say([
+			"山本：所以……有人把这个姑娘活活钉进了棺材？",
+			"（阿福伯点头。不说话。）",
+		])
+		GameState.add_note("她的结局：被人活着钉进棺材，和死人合葬。")
+		GameState.set_flag("3c_clues", true)
+		GameState.puzzle_id = ""
+		_story_step = 2
+		_set_world_interact(true)
+		if player:
+			player.locked = false
+		status.text = "再与阿福伯对话"
+		_sorting = false
+	else:
+		_feedback.text = "顺序还不对。再想想他是怎么开口的。"
+		await get_tree().create_timer(0.6).timeout
+		_sorting = false
 
 
 func _on_comb(_by: PlayerController) -> void:
@@ -156,7 +256,7 @@ func _on_chest(_by: PlayerController) -> void:
 
 
 func _on_afu(_by: PlayerController) -> void:
-	if _choice_root.visible or _picking:
+	if _sort_root.visible or _sorting:
 		return
 	match _story_step:
 		0:
@@ -186,9 +286,10 @@ func _on_afu(_by: PlayerController) -> void:
 			])
 			await ink_clear()
 			_story_step = 1
-			_show_choices()
+			_show_sort()
 		1:
-			await say(["先想清楚。他刚说的，到底是什么意思。"])
+			await say(["先把他刚说的话按顺序理一遍。"])
+			_show_sort()
 		2:
 			await say([
 				"阿福伯：先生……您要敬畏死灵……安抚怨魂……此事作罢吧……",
@@ -201,34 +302,3 @@ func _on_afu(_by: PlayerController) -> void:
 			GameState.set_flag("3d_afu_done", true)
 			GameState.puzzle_id = ""
 			goto_scene(ScenePaths.DIARY_NIGHT)
-
-
-func _on_pick(index: int) -> void:
-	if _picking or not _choice_root.visible:
-		return
-	if index < 0 or index >= CHOICES.size():
-		return
-	_picking = true
-	_hide_choices()
-	var choice: Dictionary = CHOICES[index]
-	if bool(choice["ok"]):
-		await get_tree().create_timer(1.0).timeout
-		await say([
-			"山本：所以……有人把这个姑娘活活钉进了棺材？",
-			"（阿福伯点头。不说话。）",
-		])
-		GameState.add_note("她的结局：被人活着钉进棺材，和死人合葬。")
-		GameState.set_flag("3c_clues", true)
-		GameState.puzzle_id = ""
-		_story_step = 2
-		_set_world_interact(true)
-		if player:
-			player.locked = false
-		status.text = "再与阿福伯对话"
-	else:
-		var reply: Array = choice["reply"]
-		await say(reply)
-		_picking = false
-		_show_choices()
-		return
-	_picking = false
