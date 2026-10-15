@@ -16,7 +16,9 @@ var _sort_root: Control
 var _card_list: VBoxContainer
 var _order: Array[int] = []
 var _sorting: bool = false
+var _afu_busy: bool = false
 var _feedback: Label
+var _afu_area: Interactable
 
 
 func get_room_width() -> float:
@@ -30,7 +32,8 @@ func _ready() -> void:
 	add_prop(Vector2(280, 470), Vector2(60, 50), Color("706050"), "Score")
 	add_prop(Vector2(40, 500), Vector2(70, 50), Color("3a3028"), "Chest")
 
-	make_interactable("afu_talk", "对话·阿福伯", Vector2(690, 460), Vector2(100, 120), Color("6a5a48"), false).interacted.connect(_on_afu)
+	_afu_area = make_interactable("afu_talk", "对话·阿福伯", Vector2(690, 460), Vector2(100, 120), Color("6a5a48"), false)
+	_afu_area.interacted.connect(_on_afu)
 	make_interactable("comb", "查看·梳子", Vector2(200, 500), Vector2(50, 40), Color("8a7060"), true).interacted.connect(_on_comb)
 	make_interactable("score", "查看·曲谱", Vector2(280, 490), Vector2(60, 50), Color("706050"), true).interacted.connect(_on_score)
 	make_interactable("chest", "查看·旧木箱", Vector2(40, 500), Vector2(70, 50), Color("3a3028"), true).interacted.connect(_on_chest)
@@ -120,14 +123,26 @@ func _set_world_interact(v: bool) -> void:
 			(node as Interactable).set_enabled(v)
 
 
+func _lock_scene() -> void:
+	if player:
+		player.locked = true
+	_set_world_interact(false)
+
+
+func _unlock_scene() -> void:
+	_set_world_interact(true)
+	if player:
+		player.locked = false
+
+
 func _show_sort() -> void:
+	if GameState.has_flag("3c_clues") or _story_step >= 2:
+		return
 	_sorting = false
 	_feedback.text = ""
 	_shuffle_and_refresh()
 	_sort_root.visible = true
-	if player:
-		player.locked = true
-	_set_world_interact(false)
+	_lock_scene()
 	status.text = "S3-4 · 线索拼凑 · 用 ↑↓ 调顺序"
 
 
@@ -222,21 +237,26 @@ func _on_confirm_order() -> void:
 	if _order_ok():
 		_feedback.text = ""
 		_hide_sort()
+		_lock_scene()
 		# 成功：一秒静默，不要「叮」
 		await get_tree().create_timer(1.0).timeout
 		await say([
 			"山本：所以……有人把这个姑娘活活钉进了棺材？",
 			"（阿福伯点头。不说话。）",
-		])
+		], true)
+		# 吞掉推进最后一句的 E/Space，避免同帧再触发阿福伯交互
+		await get_tree().process_frame
+		await get_tree().process_frame
 		GameState.add_note("她的结局：被人活着钉进棺材，和死人合葬。")
 		GameState.set_flag("3c_clues", true)
 		GameState.puzzle_id = ""
 		_story_step = 2
-		_set_world_interact(true)
-		if player:
-			player.locked = false
-		status.text = "再与阿福伯对话"
+		if _afu_area:
+			_afu_area.prompt_text = "对话·阿福伯（劝告）"
 		_sorting = false
+		_afu_busy = false
+		_unlock_scene()
+		status.text = "再与阿福伯对话"
 	else:
 		_feedback.text = "顺序还不对。再想想他是怎么开口的。"
 		await get_tree().create_timer(0.6).timeout
@@ -244,20 +264,32 @@ func _on_confirm_order() -> void:
 
 
 func _on_comb(_by: PlayerController) -> void:
+	if _afu_busy or _sort_root.visible:
+		return
 	await say(["木梳，缠着几根长发。"])
 
 
 func _on_score(_by: PlayerController) -> void:
+	if _afu_busy or _sort_root.visible:
+		return
 	await say(["手抄的曲谱，只抄了一半。最后一行没写完。"])
 
 
 func _on_chest(_by: PlayerController) -> void:
+	if _afu_busy or _sort_root.visible:
+		return
 	await say(["锁着。锁是新的。"])
 
 
 func _on_afu(_by: PlayerController) -> void:
-	if _sort_root.visible or _sorting:
+	# 防重入：对白/墨洗/解谜 await 之间若再按 E，会开第二条协程把进度打回
+	if _afu_busy or _sorting or _sort_root.visible:
 		return
+	if GameState.has_flag("3d_afu_done"):
+		return
+
+	_afu_busy = true
+	_lock_scene()
 	match _story_step:
 		0:
 			GameState.puzzle_id = "clues"
@@ -276,19 +308,29 @@ func _on_afu(_by: PlayerController) -> void:
 				"山本：说。",
 				"阿福伯：她……她不是自杀……他们把她……钉进去了……",
 				"阿福伯：活活钉进去的……和死人一起……合葬……",
-			])
+			], true)
 			await ink_wash(0.55, 0.05)
 			await say([
 				"（嫁衣下摆。苍白的手。指甲翻起。钉棺声。）",
 				"（空灵，无字幕。）",
 				"山本：……刚才，是什么。",
 				"山本：错觉。累了。",
-			])
+			], true)
 			await ink_clear()
+			await get_tree().process_frame
 			_story_step = 1
+			_afu_busy = false
 			_show_sort()
 		1:
-			await say(["先把他刚说的话按顺序理一遍。"])
+			if GameState.has_flag("3c_clues"):
+				_story_step = 2
+				_afu_busy = false
+				_unlock_scene()
+				status.text = "再与阿福伯对话"
+				return
+			await say(["先把他刚说的话按顺序理一遍。"], true)
+			await get_tree().process_frame
+			_afu_busy = false
 			_show_sort()
 		2:
 			await say([
@@ -298,7 +340,11 @@ func _on_afu(_by: PlayerController) -> void:
 				"山本：田中是被凶手杀的，不是什么鬼。我自己去查清楚。",
 				"阿福伯：先生……您看不见的……比看得见的……更可怕……",
 				"山本：愚昧。我自己去查。地下室那口棺材……一定有线索。",
-			])
+			], true)
 			GameState.set_flag("3d_afu_done", true)
 			GameState.puzzle_id = ""
+			status.text = "前往日记夜…"
 			goto_scene(ScenePaths.DIARY_NIGHT)
+		_:
+			_afu_busy = false
+			_unlock_scene()
